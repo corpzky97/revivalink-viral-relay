@@ -1,24 +1,24 @@
-# RevivaLink Viral Relay
+# RevivaLink Viral Relay v2.2
 
-Purpose: keep the YouTube API key server-side while the Web on Demand dashboard calls a safe relay.
+Adds a Content OS production handoff:
 
-## Endpoints
-- `GET /health`
-- `GET /api/youtube/search?q=prayer+sermon&license=creativeCommon&duration=long&maxResults=25`
-- `POST /api/queue`
+POST /api/intake/content-os
 
-## Viral scoring
-The relay combines view velocity, engagement, freshness, comment activity, and clip potential into a 0–100 score.
+## Server-only environment variables
 
-## Rights behavior
-- YouTube `creativeCommon` is marked `SAFE_WITH_TERMS`, not automatically cleared for every commercial use.
-- Standard YouTube license is marked `INSPIRATION_ONLY` until explicit permission/license evidence is verified.
-- Do not use `contentDetails.licensedContent` as permission to reuse; it indicates partner-claimed licensed content, not a reuse grant.
+- CONTENT_OS_WEBHOOK_URL
+- CONTENT_OS_TOKEN
+- CONTENT_OS_MIN_SCORE (optional, default 80)
 
-## Start
-1. Copy `.env.example` to `.env`
-2. Set `YOUTUBE_API_KEY`
-3. `npm install`
-4. `npm start`
+Existing v2.1 environment variables remain unchanged.
 
-Set `ALLOWED_ORIGIN` to the live RevivaLink dashboard origin.
+## Behavior
+
+- Normalizes the RevivaLink Content OS payload.
+- Preserves rights/reuse and attribution metadata.
+- Requires approval + reuse clearance + high score for automatic handoff.
+- Protected topics are always returned as `manual_review` and are never auto-forwarded:
+  prophecy, breaking news, Israel/war/geopolitics, politics/elections, legal claims, and AI/end-times claims.
+- Tokens are used only by the relay and are never returned to browser JavaScript.
+- If CONTENT_OS_WEBHOOK_URL / CONTENT_OS_TOKEN are not yet configured, the endpoint returns
+  `ready_for_content_os` with the validated normalized package so the contract can be tested safely.

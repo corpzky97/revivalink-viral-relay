@@ -110,11 +110,153 @@ async function postBearer(url, apiKey, payload) {
   };
 }
 
+
+const PROTECTED_TOPIC_PATTERNS = [
+  { name: "prophecy", re: /\b(prophec(?:y|ies|tic)|prophetic word|thus saith|prediction)\b/i },
+  { name: "breaking_news", re: /\b(breaking news|developing story|just in|urgent update)\b/i },
+  { name: "israel_war_geopolitics", re: /\b(israel|gaza|hamas|hezbollah|iran|ukraine|russia|war|geopolitic|ceasefire|missile|military strike)\b/i },
+  { name: "politics_elections", re: /\b(politic|election|ballot|vote|voting|candidate|president|congress|senate|governor|campaign)\b/i },
+  { name: "legal_claims", re: /\b(lawsuit|legal claim|criminal charge|indictment|arrested|convicted|court ruled|attorney alleges)\b/i },
+  { name: "ai_end_times", re: /\b(artificial intelligence|openai|chatgpt|ai\b.*\b(end times|antichrist|mark of the beast|revelation)|end times\b.*\bai)\b/i }
+];
+
+function detectProtectedTopic(body = {}) {
+  if (body.protectedTopic === true || body.manualReviewOnly === true) {
+    return { protected: true, category: String(body.protectedCategory || "manual_review") };
+  }
+
+  const text = [
+    body.topic,
+    body.title,
+    body.viralHook,
+    body.viral_hook,
+    body.caption,
+    body.angle,
+    body.captionAngle,
+    body.transcript,
+    body.whyTrending
+  ].filter(Boolean).join(" ");
+
+  for (const rule of PROTECTED_TOPIC_PATTERNS) {
+    if (rule.re.test(text)) return { protected: true, category: rule.name };
+  }
+  return { protected: false, category: "" };
+}
+
+function numberOrZero(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function arrayOrEmpty(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string" && v.trim()) {
+    return v.split(",").map(x => x.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeContentOSPayload(body = {}) {
+  const attribution = buildAttribution(body);
+  const rightsStatus = String(
+    body.rightsStatus ||
+    body.rights?.status ||
+    attribution.rightsStatus ||
+    ""
+  ).trim();
+
+  const sourceUrl = String(body.sourceUrl || body.url || "").trim();
+  const title = String(body.topic || body.title || "").trim();
+  const trendScore = numberOrZero(
+    body.trendClipScore ??
+    body.trend_score ??
+    body.clipScore ??
+    body.viralScore
+  );
+
+  const timestamps =
+    body.timestamps && typeof body.timestamps === "object"
+      ? body.timestamps
+      : {
+          start: body.clipStart ?? body.startTime ?? "",
+          end: body.clipEnd ?? body.endTime ?? ""
+        };
+
+  const protectedTopic = detectProtectedTopic(body);
+
+  return {
+    source_url: sourceUrl,
+    topic_title: title,
+    viral_hook: String(body.viralHook || body.viral_hook || title || "").trim(),
+    trend_clip_score: trendScore,
+    freshness: numberOrZero(body.freshness ?? body.freshnessScore),
+    ministry_relevance: numberOrZero(body.ministryRelevance ?? body.ministry_relevance),
+    source_confidence: numberOrZero(body.sourceConfidence ?? body.source_confidence),
+    suggested_format: String(body.suggestedFormat || body.suggested_format || body.format || "").trim(),
+    caption_angle: String(body.captionAngle || body.caption_angle || body.caption || body.angle || "").trim(),
+    hashtags: arrayOrEmpty(body.hashtags),
+    clip: {
+      timestamps,
+      transcript: String(body.transcript || "").trim()
+    },
+    source_system: String(body.sourceSystem || body.source_system || "revivalink-viral-intelligence").trim(),
+    rights: {
+      status: rightsStatus,
+      license: String(body.license || attribution.license || "").trim(),
+      reuse_allowed: body.reuseAllowed === true || rightsStatus === "SAFE_WITH_TERMS",
+      speaker_credit: attribution.speakerCredit,
+      owner_credit: attribution.ownerCredit,
+      source_title: attribution.sourceTitle,
+      source_channel: attribution.sourceChannel
+    },
+    review: {
+      approved: body.approved === true || String(body.approvalStatus || "").toLowerCase() === "approved",
+      protected_topic: protectedTopic.protected,
+      protected_category: protectedTopic.category,
+      manual_review_only: protectedTopic.protected
+    },
+    created_at: String(body.createdAt || new Date().toISOString()),
+    observed_at: String(body.observedAt || body.publishedAt || new Date().toISOString())
+  };
+}
+
+async function postContentOS(payload) {
+  const url = process.env.CONTENT_OS_WEBHOOK_URL;
+  const token = process.env.CONTENT_OS_TOKEN;
+
+  if (!url || !token) {
+    return {
+      ok: true,
+      configured: false,
+      status: "ready_for_content_os",
+      message: "Validated Content OS package created, but CONTENT_OS_WEBHOOK_URL / CONTENT_OS_TOKEN are not configured."
+    };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-RevivaLink-Token": token
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const responseBody = await parseResponse(response);
+  return {
+    ok: response.ok,
+    configured: true,
+    status: response.ok ? "sent" : "failed",
+    httpStatus: response.status,
+    response: responseBody
+  };
+}
+
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "RevivaLink Viral Relay",
-    message: "Use /health, /api/youtube/search, /api/queue, or /api/handoff/*"
+    message: "Use /health, /api/youtube/search, /api/queue, /api/handoff/*, or /api/intake/content-os"
   });
 });
 
@@ -122,7 +264,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "RevivaLink Viral Relay",
-    version: "2.1.0",
+    version: "2.2.0",
     youtubeConfigured: Boolean(process.env.YOUTUBE_API_KEY),
     handoffs: {
       opus: Boolean(process.env.OPUS_API_URL && process.env.OPUS_API_KEY),
@@ -133,8 +275,13 @@ app.get("/health", (_req, res) => {
       broadcastr: Boolean(
         process.env.BROADCASTR_WEBHOOK_URL &&
         process.env.BROADCASTR_API_KEY
+      ),
+      contentOS: Boolean(
+        process.env.CONTENT_OS_WEBHOOK_URL &&
+        process.env.CONTENT_OS_TOKEN
       )
-    }
+    },
+    contentOSMinScore: Number(process.env.CONTENT_OS_MIN_SCORE || 80)
   });
 });
 
@@ -355,6 +502,80 @@ app.post("/api/handoff/broadcastr", async (req, res) => {
   }
 });
 
+
+app.post("/api/intake/content-os", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object") {
+      return res.status(400).json({ ok: false, status: "failed", error: "JSON body required" });
+    }
+
+    const payload = normalizeContentOSPayload(req.body);
+    const minScore = Number(process.env.CONTENT_OS_MIN_SCORE || 80);
+
+    if (!payload.source_url) {
+      return res.status(400).json({ ok: false, status: "failed", error: "source URL is required" });
+    }
+
+    if (!payload.topic_title) {
+      return res.status(400).json({ ok: false, status: "failed", error: "topic/title is required" });
+    }
+
+    if (payload.review.protected_topic) {
+      return res.status(202).json({
+        ok: true,
+        status: "manual_review",
+        reason: "protected_topic",
+        protectedCategory: payload.review.protected_category,
+        payload
+      });
+    }
+
+    if (!payload.review.approved) {
+      return res.status(202).json({
+        ok: true,
+        status: "manual_review",
+        reason: "not_approved",
+        payload
+      });
+    }
+
+    if (!payload.rights.reuse_allowed) {
+      return res.status(202).json({
+        ok: true,
+        status: "manual_review",
+        reason: "rights_not_cleared",
+        payload
+      });
+    }
+
+    if (payload.trend_clip_score < minScore) {
+      return res.status(202).json({
+        ok: true,
+        status: "held_by_score",
+        minimumScore: minScore,
+        payload
+      });
+    }
+
+    const result = await postContentOS(payload);
+    const statusCode = result.ok ? (result.configured ? 200 : 202) : 502;
+
+    return res.status(statusCode).json({
+      ok: result.ok,
+      handoff: "content-os",
+      ...result,
+      payload
+    });
+  } catch (err) {
+    return res.status(502).json({
+      ok: false,
+      handoff: "content-os",
+      status: "failed",
+      error: err.message
+    });
+  }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`RevivaLink Viral Relay v2.1 listening on :${PORT}`);
+  console.log(`RevivaLink Viral Relay v2.2 listening on :${PORT}`);
 });
