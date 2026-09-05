@@ -1,0 +1,47 @@
+{
+  "project": "RevivaLink Viral Sermon Intelligence",
+  "collections": {
+    "sermons": {
+      "fields": {
+        "sourceUrl": "string|required",
+        "platform": "string|required",
+        "title": "string|required",
+        "channel": "string",
+        "publishedAt": "datetime",
+        "duration": "string",
+        "views": "number",
+        "likes": "number",
+        "comments": "number",
+        "license": "string",
+        "rightsStatus": "enum:SAFE_WITH_TERMS,NONCOMMERCIAL_ONLY,PERMISSION_REQUIRED,INSPIRATION_ONLY,DO_NOT_USE",
+        "viralScore": "number",
+        "topic": "string",
+        "clipPotential": "number",
+        "notes": "string"
+      }
+    },
+    "production_queue": {
+      "fields": {
+        "sermonId": "string|required",
+        "destination": "enum:OPUS_CLIP,KINGDOM_CLIPPER,BROADCASTR,ORIGINAL_CONTENT",
+        "status": "enum:REVIEW,APPROVED,SENT,COMPLETED,HOLD",
+        "sourceUrl": "string|required",
+        "rightsStatus": "string|required",
+        "attribution": "string",
+        "hook": "string",
+        "title": "string",
+        "caption": "string",
+        "hashtags": "string",
+        "createdAt": "datetime"
+      }
+    }
+  },
+  "recommendedEndpoints": [
+    "GET /sermons",
+    "POST /sermons",
+    "PATCH /sermons/:id",
+    "GET /production_queue",
+    "POST /production_queue",
+    "PATCH /production_queue/:id"
+  ]
+}
