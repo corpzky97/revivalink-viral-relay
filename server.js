@@ -79,24 +79,28 @@ function validateHandoff(body) {
   return null;
 }
 
-async function postWebhook(url, token, payload) {
-  if (!url) {
+async function parseResponse(response) {
+  const text = await response.text();
+  let body = text;
+  try { body = text ? JSON.parse(text) : null; } catch {}
+  return body;
+}
+
+async function postBearer(url, apiKey, payload) {
+  if (!url || !apiKey) {
     return { ok: false, configured: false, status: "not_configured" };
   }
 
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["X-RevivaLink-Token"] = token;
-
   const response = await fetch(url, {
     method: "POST",
-    headers,
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(payload)
   });
 
-  const text = await response.text();
-  let responseBody = text;
-  try { responseBody = text ? JSON.parse(text) : null; } catch {}
-
+  const responseBody = await parseResponse(response);
   return {
     ok: response.ok,
     configured: true,
@@ -118,12 +122,18 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "RevivaLink Viral Relay",
-    version: "2.0.0",
+    version: "2.1.0",
     youtubeConfigured: Boolean(process.env.YOUTUBE_API_KEY),
     handoffs: {
-      opus: Boolean(process.env.OPUS_WEBHOOK_URL),
-      kingdomClipper: Boolean(process.env.KINGDOM_CLIPPER_WEBHOOK_URL),
-      broadcastr: Boolean(process.env.BROADCASTR_WEBHOOK_URL)
+      opus: Boolean(process.env.OPUS_API_URL && process.env.OPUS_API_KEY),
+      kingdomClipper: Boolean(
+        process.env.KINGDOM_CLIPPER_WEBHOOK_URL &&
+        process.env.KINGDOM_CLIPPER_API_KEY
+      ),
+      broadcastr: Boolean(
+        process.env.BROADCASTR_WEBHOOK_URL &&
+        process.env.BROADCASTR_API_KEY
+      )
     }
   });
 });
@@ -247,26 +257,27 @@ app.post("/api/handoff/opus", async (req, res) => {
   const error = validateHandoff(req.body);
   if (error) return res.status(400).json({ ok: false, error });
 
+  const url = process.env.OPUS_API_URL || "https://api.opus.pro/api/clip-projects";
+  const apiKey = process.env.OPUS_API_KEY;
+
   const payload = {
-    type: "opus_clip_intake",
-    title: req.body.title,
-    sourceUrl: req.body.sourceUrl || req.body.url,
-    viralScore: req.body.viralScore ?? null,
-    suggestedMoments: req.body.suggestedMoments || [],
-    attribution: buildAttribution(req.body)
+    videoUrl: req.body.sourceUrl || req.body.url
   };
 
+  if (req.body.curationPref) payload.curationPref = req.body.curationPref;
+  if (req.body.importPref) payload.importPref = req.body.importPref;
+  if (req.body.brandTemplateId) payload.brandTemplateId = req.body.brandTemplateId;
+  if (req.body.conclusionActions) payload.conclusionActions = req.body.conclusionActions;
+
   try {
-    const result = await postWebhook(
-      process.env.OPUS_WEBHOOK_URL,
-      process.env.OPUS_WEBHOOK_TOKEN,
-      payload
-    );
-    res.status(result.ok ? 200 : result.configured ? 502 : 200).json({
+    const result = await postBearer(url, apiKey, payload);
+    const statusCode = result.ok ? 200 : result.configured ? 502 : 200;
+    res.status(statusCode).json({
       ok: result.ok,
       handoff: "opus",
       ...result,
-      payload
+      payload,
+      attribution: buildAttribution(req.body)
     });
   } catch (err) {
     res.status(502).json({ ok: false, handoff: "opus", error: err.message });
@@ -279,26 +290,22 @@ app.post("/api/handoff/kingdom", async (req, res) => {
 
   const attribution = buildAttribution(req.body);
   const payload = {
-    type: "kingdom_clipper_intake",
     title: req.body.title,
     sourceUrl: req.body.sourceUrl || req.body.url,
-    clipUrl: req.body.clipUrl || "",
-    viralScore: req.body.viralScore ?? null,
-    hook: req.body.hook || "",
+    speakerCredit: attribution.speakerCredit,
+    ownerCredit: attribution.ownerCredit,
+    license: attribution.license,
+    rightsStatus: attribution.rightsStatus || "SAFE_WITH_TERMS",
+    viralScore: Number(req.body.viralScore || 0),
+    assetUrl: req.body.assetUrl || req.body.clipUrl || "",
     caption: req.body.caption || "",
-    hashtags: req.body.hashtags || [],
-    bibleRefs: req.body.bibleRefs || [],
-    attribution,
-    creditLine:
-      [attribution.speakerCredit, attribution.ownerCredit]
-        .filter(Boolean)
-        .join(" • ")
+    hashtags: Array.isArray(req.body.hashtags) ? req.body.hashtags : []
   };
 
   try {
-    const result = await postWebhook(
+    const result = await postBearer(
       process.env.KINGDOM_CLIPPER_WEBHOOK_URL,
-      process.env.KINGDOM_CLIPPER_TOKEN,
+      process.env.KINGDOM_CLIPPER_API_KEY,
       payload
     );
     res.status(result.ok ? 200 : result.configured ? 502 : 200).json({
@@ -318,25 +325,23 @@ app.post("/api/handoff/broadcastr", async (req, res) => {
 
   const attribution = buildAttribution(req.body);
   const payload = {
-    type: "broadcastr_intake",
     title: req.body.title,
     sourceUrl: req.body.sourceUrl || req.body.url,
+    speakerCredit: attribution.speakerCredit,
+    ownerCredit: attribution.ownerCredit,
+    license: attribution.license,
+    rightsStatus: attribution.rightsStatus || "SAFE_WITH_TERMS",
+    viralScore: Number(req.body.viralScore || 0),
     assetUrl: req.body.assetUrl || req.body.clipUrl || "",
-    viralScore: req.body.viralScore ?? null,
     caption: req.body.caption || "",
-    platforms: req.body.platforms || [],
-    scheduleTime: req.body.scheduleTime || null,
-    attribution,
-    creditLine:
-      [attribution.speakerCredit, attribution.ownerCredit]
-        .filter(Boolean)
-        .join(" • ")
+    platforms: Array.isArray(req.body.platforms) ? req.body.platforms : [],
+    scheduleTime: req.body.scheduleTime || ""
   };
 
   try {
-    const result = await postWebhook(
+    const result = await postBearer(
       process.env.BROADCASTR_WEBHOOK_URL,
-      process.env.BROADCASTR_TOKEN,
+      process.env.BROADCASTR_API_KEY,
       payload
     );
     res.status(result.ok ? 200 : result.configured ? 502 : 200).json({
@@ -351,5 +356,5 @@ app.post("/api/handoff/broadcastr", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`RevivaLink Viral Relay v2 listening on :${PORT}`);
+  console.log(`RevivaLink Viral Relay v2.1 listening on :${PORT}`);
 });
