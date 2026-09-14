@@ -576,6 +576,92 @@ app.post("/api/intake/content-os", async (req, res) => {
   }
 });
 
+
+// Kingdom Men Telegram setup. Tokens and raw Telegram updates never leave the server.
+const kingdomMenTelegramState = { status: "starting", botVerified: false, groupConfigured: false };
+async function kingdomMenTelegramCall(method, body = {}) {
+  const token = process.env.KINGDOM_MEN_TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error("token_missing");
+  let response;
+  try {
+    response = await fetch("https://api.telegram.org/bot" + token + "/" + method, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error("telegram_" + (data.error_code || response.status));
+    return data.result;
+  } catch (error) {
+    // Never log fetch errors or upstream descriptions: they may contain the credential URL.
+    const safe = /^telegram_[0-9]+$/.test(error.message) ? error.message : "telegram_request_failed";
+    throw new Error(safe);
+  }
+}
+async function checkKingdomMenTelegram() {
+  if (!process.env.KINGDOM_MEN_TELEGRAM_BOT_TOKEN) {
+    kingdomMenTelegramState.status = "token_missing";
+    return;
+  }
+  try {
+    const bot = await kingdomMenTelegramCall("getMe");
+    if (bot.username !== "KingdomMenHawaiiDailyBot") {
+      kingdomMenTelegramState.status = "wrong_bot";
+      return;
+    }
+    kingdomMenTelegramState.botVerified = true;
+    const chatId = process.env.KINGDOM_MEN_TELEGRAM_CHAT_ID;
+    if (chatId) {
+      if (!/^-[0-9]+$/.test(chatId)) throw new Error("invalid_group_id");
+      const chat = await kingdomMenTelegramCall("getChat", { chat_id: chatId });
+      const member = await kingdomMenTelegramCall("getChatMember", { chat_id: chatId, user_id: bot.id });
+      if (!["group", "supergroup"].includes(chat.type) || ["left", "kicked"].includes(member.status)) {
+        throw new Error("bot_not_in_group");
+      }
+      kingdomMenTelegramState.groupConfigured = true;
+      kingdomMenTelegramState.status = "group_verified_delivery_not_configured";
+      console.log("[Kingdom Men] Bot and configured group verified. Daily delivery is not yet configured.");
+      return;
+    }
+    kingdomMenTelegramState.status = "group_id_required";
+    // Read pending setup commands without confirming/consuming the update queue.
+    // Never select a destination based on its title or auto-bind the first group.
+    const hook = await kingdomMenTelegramCall("getWebhookInfo");
+    if (hook.url) {
+      console.log("[Kingdom Men] Existing webhook preserved; group discovery skipped.");
+      return;
+    }
+    const updates = await kingdomMenTelegramCall("getUpdates", { timeout: 0, limit: 100 });
+    const ids = new Set();
+    for (const update of updates) {
+      const message = update.message;
+      if (!message || !["group", "supergroup"].includes(message.chat?.type)) continue;
+      if (message.text?.trim() !== "/kingdom_setup@KingdomMenHawaiiDailyBot") continue;
+      if (!message.from || message.from.is_bot) continue;
+      const sender = await kingdomMenTelegramCall("getChatMember", {
+        chat_id: message.chat.id, user_id: message.from.id
+      });
+      if (!["creator", "administrator"].includes(sender.status)) continue;
+      ids.add(String(message.chat.id));
+    }
+    for (const id of ids) console.log("[Kingdom Men] Admin setup command received. Confirm this destination in Render: KINGDOM_MEN_TELEGRAM_CHAT_ID=" + id);
+    if (!ids.size) console.log("[Kingdom Men] Bot verified. Send /kingdom_setup@KingdomMenHawaiiDailyBot in your group, then restart this service to identify it.");
+  } catch (error) {
+    kingdomMenTelegramState.status = ["invalid_group_id", "bot_not_in_group"].includes(error.message)
+      ? error.message : (/^telegram_[0-9]+$/.test(error.message) ? error.message : "telegram_request_failed");
+    console.log("[Kingdom Men] Setup status: " + kingdomMenTelegramState.status);
+  }
+}
+app.get("/api/kingdom-men/status", (_req, res) => {
+  res.set("Cache-Control", "no-store").json({
+    ...kingdomMenTelegramState,
+    dailyDeliveryEnabled: false
+  });
+});
+checkKingdomMenTelegram();
+
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`RevivaLink Viral Relay v2.2 listening on :${PORT}`);
 });
