@@ -62,17 +62,59 @@ function getImageBytes() {
   return Buffer.from(parts.join(""), "base64");
 }
 
-async function sendWelcome() {
-  if (process.env.KINGDOM_MEN_WELCOME_ON_START !== "1") return;
-
-  const chatId = process.env.KINGDOM_MEN_TELEGRAM_CHAT_ID;
-  const text = String(process.env.KINGDOM_MEN_ONE_TIME_MESSAGE || "").trim();
-
-  if (!chatId) throw new Error("chat_id_missing");
-  if (!text) throw new Error("message_missing");
-
+async function verifyBot() {
   const bot = await telegram("getMe");
   if (bot.username !== BOT_USERNAME) throw new Error("wrong_bot");
+  return bot;
+}
+
+async function sendShareLink(chatId) {
+  const invite = await telegram("createChatInviteLink", {
+    chat_id: chatId,
+    name: "Kingdom Men Hawaii Share Link"
+  });
+
+  const text = [
+    "🔗 SHARE KINGDOM MEN HAWAII",
+    "",
+    "Brothers, help us build the brotherhood. Invite men who desire to grow in Christ, strengthen their families, and walk with other godly men.",
+    "",
+    invite.invite_link,
+    "",
+    "Faith • Family • Brotherhood • Work • Legacy"
+  ].join("\n");
+
+  const sent = await telegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true
+  });
+
+  if (process.env.KINGDOM_MEN_SHARE_LINK_PIN === "1" && sent?.message_id) {
+    await telegram("pinChatMessage", {
+      chat_id: chatId,
+      message_id: sent.message_id,
+      disable_notification: true
+    });
+  }
+
+  console.log(`[Kingdom Men] Share link created and posted: ${invite.invite_link}`);
+}
+
+async function runOneTimeActions() {
+  const chatId = process.env.KINGDOM_MEN_TELEGRAM_CHAT_ID;
+  if (!chatId) throw new Error("chat_id_missing");
+
+  await verifyBot();
+
+  if (process.env.KINGDOM_MEN_SHARE_LINK_ON_START === "1") {
+    await sendShareLink(chatId);
+  }
+
+  if (process.env.KINGDOM_MEN_WELCOME_ON_START !== "1") return;
+
+  const text = String(process.env.KINGDOM_MEN_ONE_TIME_MESSAGE || "").trim();
+  if (!text) throw new Error("message_missing");
 
   const imageBytes = getImageBytes();
   let sent;
@@ -117,7 +159,7 @@ async function sendWelcome() {
 }
 
 setTimeout(() => {
-  sendWelcome().catch(err => {
+  runOneTimeActions().catch(err => {
     console.log(`[Kingdom Men] One-time send failed: ${err.message}`);
   });
 }, 6000);
