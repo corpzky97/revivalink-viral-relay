@@ -4,7 +4,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "start": "node -r ./kingdom-men-welcome.js server.js"
+    "start": "node -r ./kingdom-men-scheduler.js server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
