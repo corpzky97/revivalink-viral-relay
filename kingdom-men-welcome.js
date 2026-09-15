@@ -75,16 +75,44 @@ async function sendWelcome() {
   if (bot.username !== BOT_USERNAME) throw new Error("wrong_bot");
 
   const imageBytes = getImageBytes();
+  let sent;
   if (imageBytes) {
-    await telegramPhoto(chatId, text, imageBytes);
+    sent = await telegramPhoto(chatId, text, imageBytes);
     console.log("[Kingdom Men] One-time image post sent to the verified Telegram group.");
   } else {
-    await telegram("sendMessage", {
+    sent = await telegram("sendMessage", {
       chat_id: chatId,
       text,
       disable_web_page_preview: true
     });
     console.log("[Kingdom Men] One-time text post sent to the verified Telegram group.");
+  }
+
+  if (process.env.KINGDOM_MEN_PIN_ON_START === "1" && sent?.message_id) {
+    await telegram("pinChatMessage", {
+      chat_id: chatId,
+      message_id: sent.message_id,
+      disable_notification: true
+    });
+    console.log("[Kingdom Men] One-time post pinned in the verified Telegram group.");
+  }
+
+  if (process.env.KINGDOM_MEN_POLL_ON_START === "1") {
+    await telegram("sendPoll", {
+      chat_id: chatId,
+      question: "Which Kingdom Men resource would help you most right now?",
+      options: [
+        "Daily Word / Devotionals",
+        "Marriage & Fatherhood",
+        "Prayer & Spiritual Growth",
+        "Jobs, Skills & Provision",
+        "Men's Health & Fitness",
+        "Brotherhood & Mentoring"
+      ],
+      is_anonymous: false,
+      allows_multiple_answers: true
+    });
+    console.log("[Kingdom Men] Resource poll sent to the verified Telegram group.");
   }
 }
 
