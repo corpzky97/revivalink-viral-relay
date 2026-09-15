@@ -43,11 +43,20 @@ async function telegramPhoto(chatId, caption, imageBytes) {
 }
 
 function getImageBytes() {
+  const count = Math.max(0, Math.min(20, Number(process.env.KINGDOM_MEN_IMAGE_CHUNK_COUNT || 0)));
   const parts = [];
-  for (let i = 1; i <= 20; i++) {
-    const v = process.env[`KINGDOM_MEN_IMAGE_B64_${i}`];
-    if (!v) break;
-    parts.push(v);
+  if (count) {
+    for (let i = 1; i <= count; i++) {
+      const v = process.env[`KINGDOM_MEN_IMAGE_B64_${i}`];
+      if (!v) throw new Error(`image_chunk_${i}_missing`);
+      parts.push(v);
+    }
+  } else {
+    for (let i = 1; i <= 20; i++) {
+      const v = process.env[`KINGDOM_MEN_IMAGE_B64_${i}`];
+      if (!v) break;
+      parts.push(v);
+    }
   }
   if (!parts.length) return null;
   return Buffer.from(parts.join(""), "base64");
