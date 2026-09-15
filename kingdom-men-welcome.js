@@ -1,6 +1,7 @@
 // One-time manual Kingdom Men Hawaii Telegram sender.
 // This module does not schedule recurring delivery.
 
+const crypto = require("crypto");
 const BOT_USERNAME = "KingdomMenHawaiiDailyBot";
 
 async function telegram(method, body = {}) {
@@ -21,29 +22,46 @@ async function telegram(method, body = {}) {
   return data.result;
 }
 
-async function telegramPhoto(chatId, caption, imageBytes) {
+function safeTelegramDescription(data, fallback) {
+  return String(data?.description || fallback || "unknown")
+    .replace(/https?:\/\/\S+/g, "[url]")
+    .replace(/bot\d+:[A-Za-z0-9_-]+/g, "[token]")
+    .slice(0, 180);
+}
+
+async function telegramMultipart(chatId, caption, imageBytes, method = "sendPhoto") {
   const token = process.env.KINGDOM_MEN_TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("token_missing");
 
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("caption", caption.slice(0, 1024));
-  form.append("photo", new Blob([imageBytes], { type: "image/jpeg" }), "kingdom-men-invite.jpg");
+  if (method === "sendPhoto") {
+    form.append("photo", new Blob([imageBytes], { type: "image/jpeg" }), "kingdom-men-invite.jpg");
+  } else {
+    form.append("document", new Blob([imageBytes], { type: "image/jpeg" }), "kingdom-men-invite.jpg");
+  }
 
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     body: form,
     signal: AbortSignal.timeout(30000)
   });
   const data = await response.json();
   if (!response.ok || !data.ok) {
-    const safeDescription = String(data?.description || "unknown")
-      .replace(/https?:\/\/\S+/g, "[url]")
-      .replace(/bot\d+:[A-Za-z0-9_-]+/g, "[token]")
-      .slice(0, 180);
-    throw new Error(`telegram_${data.error_code || response.status}_${safeDescription}`);
+    throw new Error(`telegram_${data.error_code || response.status}_${safeTelegramDescription(data)}`);
   }
   return data.result;
+}
+
+async function telegramPhoto(chatId, caption, imageBytes) {
+  try {
+    return await telegramMultipart(chatId, caption, imageBytes, "sendPhoto");
+  } catch (err) {
+    if (!String(err.message).includes("IMAGE_PROCESS_FAILED")) throw err;
+    console.log("[Kingdom Men] Telegram photo processing failed; retrying same JPEG as a document attachment.");
+    return await telegramMultipart(chatId, caption, imageBytes, "sendDocument");
+  }
 }
 
 function getImageBytes() {
@@ -63,7 +81,10 @@ function getImageBytes() {
     }
   }
   if (!parts.length) return null;
-  return Buffer.from(parts.join(""), "base64");
+  const bytes = Buffer.from(parts.join(""), "base64");
+  const sha = crypto.createHash("sha256").update(bytes).digest("hex");
+  console.log(`[Kingdom Men] Prepared image bytes=${bytes.length} sha256=${sha.slice(0,16)} jpeg=${bytes[0]===0xff && bytes[1]===0xd8 && bytes.at(-2)===0xff && bytes.at(-1)===0xd9}`);
+  return bytes;
 }
 
 async function verifyBot() {
@@ -124,7 +145,7 @@ async function runOneTimeActions() {
   let sent;
   if (imageBytes) {
     sent = await telegramPhoto(chatId, text, imageBytes);
-    console.log("[Kingdom Men] One-time image post sent to the verified Telegram group.");
+    console.log("[Kingdom Men] One-time image attachment post sent to the verified Telegram group.");
   } else {
     sent = await telegram("sendMessage", {
       chat_id: chatId,
