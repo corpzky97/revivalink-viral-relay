@@ -37,7 +37,11 @@ async function telegramPhoto(chatId, caption, imageBytes) {
   });
   const data = await response.json();
   if (!response.ok || !data.ok) {
-    throw new Error(`telegram_${data.error_code || response.status}`);
+    const safeDescription = String(data?.description || "unknown")
+      .replace(/https?:\/\/\S+/g, "[url]")
+      .replace(/bot\d+:[A-Za-z0-9_-]+/g, "[token]")
+      .slice(0, 180);
+    throw new Error(`telegram_${data.error_code || response.status}_${safeDescription}`);
   }
   return data.result;
 }
