@@ -1,0 +1,49 @@
+// One-time manual Kingdom Men Hawaii Telegram sender.
+// This module does not schedule recurring delivery.
+
+const BOT_USERNAME = "KingdomMenHawaiiDailyBot";
+
+async function telegram(method, body = {}) {
+  const token = process.env.KINGDOM_MEN_TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error("token_missing");
+
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15000)
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    throw new Error(`telegram_${data.error_code || response.status}`);
+  }
+  return data.result;
+}
+
+async function sendWelcome() {
+  if (process.env.KINGDOM_MEN_WELCOME_ON_START !== "1") return;
+
+  const chatId = process.env.KINGDOM_MEN_TELEGRAM_CHAT_ID;
+  const text = String(process.env.KINGDOM_MEN_ONE_TIME_MESSAGE || "").trim();
+
+  if (!chatId) throw new Error("chat_id_missing");
+  if (!text) throw new Error("message_missing");
+
+  const bot = await telegram("getMe");
+  if (bot.username !== BOT_USERNAME) throw new Error("wrong_bot");
+
+  await telegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true
+  });
+
+  console.log("[Kingdom Men] One-time welcome message sent to the verified Telegram group.");
+}
+
+setTimeout(() => {
+  sendWelcome().catch(err => {
+    console.log(`[Kingdom Men] One-time welcome send failed: ${err.message}`);
+  });
+}, 6000);
